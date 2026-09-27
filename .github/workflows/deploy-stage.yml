@@ -1,0 +1,72 @@
+name: Deploy one Northstar environment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name (DEV, SI, QA, UAT, or PROD)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.APP_URL }}
+    steps:
+      - name: Download the tested release
+        uses: actions/download-artifact@v4
+        with:
+          name: northstar-release
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Configure App Service
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          APP_ENV: ${{ inputs.environment }}
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_ALLOWED_HOSTS: ${{ vars.DJANGO_ALLOWED_HOSTS }}
+          CSRF_TRUSTED_ORIGINS: ${{ vars.CSRF_TRUSTED_ORIGINS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          az webapp config set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --linux-fx-version 'PYTHON|3.12' \
+            --startup-file 'bash startup.sh' \
+            --output none
+          az webapp config appsettings set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --settings \
+              "APP_ENV=$APP_ENV" \
+              'DJANGO_DEBUG=false' \
+              "DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY" \
+              "DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS" \
+              "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" \
+              "DATABASE_URL=$DATABASE_URL" \
+              'SCM_DO_BUILD_DURING_DEPLOYMENT=true' \
+            --output none
+
+      - name: Deploy release
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: release.zip
+
+      - name: Check deployed app and database
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "$APP_URL/api/health/"

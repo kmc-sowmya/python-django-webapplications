@@ -1,0 +1,17 @@
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig(({ mode }) => ({
+  base: mode === 'production' ? '/static/frontend/' : '/',
+  plugins: [react()],
+  build: {
+    outDir: '../backend/static/frontend',
+    emptyOutDir: true,
+  },
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
+  },
+}))
